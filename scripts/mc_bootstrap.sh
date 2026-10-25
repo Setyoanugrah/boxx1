@@ -8,7 +8,9 @@
 #   STATE_TOKEN  PAT buat restore world dari repo privat
 set -euo pipefail
 
-REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# script bisa jalan dari scripts/ di repo, atau dari /opt/mcbin (hasil copy)
+if [ -f "$SCRIPT_DIR/mc_version.py" ]; then BIN="$SCRIPT_DIR"; else BIN="$SCRIPT_DIR/scripts"; fi
 MC_DIR="${MC_DIR:-$HOME/mc}"
 SRV="$MC_DIR/srv"
 LOG="$MC_DIR/srv.log"
@@ -20,7 +22,7 @@ cd "$MC_DIR"
 if [ -n "${MCVER:-}" ]; then
   URL="https://www.minecraft.net/bedrockdedicatedserver/bin-linux/bedrock-server-${MCVER}.zip"
 else
-  URL=$(python3 "$REPO_DIR/scripts/mc_version.py")
+  URL=$(python3 "$BIN/mc_version.py")
 fi
 echo "URL=$URL"
 curl -fL --http1.1 --retry 3 --retry-all-errors -A "Mozilla/5.0" -o bs.zip "$URL"
@@ -44,9 +46,9 @@ if [ -n "${STATE_TOKEN:-}" ]; then
 fi
 
 # ---- config ----
-python3 "$REPO_DIR/scripts/mc_setup.py" "$SRV/server.properties"
+python3 "$BIN/mc_setup.py" "$SRV/server.properties"
 
 # ---- start ----
-cp "$REPO_DIR/scripts/mcctl.sh" "$MC_DIR/mcctl.sh"
+cp "$BIN/mcctl.sh" "$MC_DIR/mcctl.sh"
 chmod +x "$MC_DIR/mcctl.sh"
 "$MC_DIR/mcctl.sh" start
