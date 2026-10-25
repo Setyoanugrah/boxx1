@@ -1,0 +1,182 @@
+name: vps
+
+on:
+  workflow_dispatch:
+    inputs:
+      hours:
+        description: "keep alive (jam, max 5)"
+        required: false
+        default: "5"
+      playwright:
+        description: "install playwright + chromium (yes/no)"
+        required: false
+        default: "no"
+
+concurrency:
+  group: vps-x1
+  cancel-in-progress: false
+
+jobs:
+  box:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      TS_AUTHKEY: ${{ secrets.TS_AUTHKEY }}
+      NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+      UNAME: runzzx1
+      HOURS: ${{ inputs.hours }}
+      PW: ${{ inputs.playwright }}
+    steps:
+      - name: boot
+        run: |
+          set -euo pipefail
+
+          PASS=$(openssl rand -hex 8)
+          echo "PASS=$PASS" >> "$GITHUB_ENV"
+
+          # ---- user ----
+          sudo useradd -m -s /bin/bash "$UNAME" 2>/dev/null || true
+          echo "$UNAME:$PASS" | sudo chpasswd
+          sudo usermod -aG sudo "$UNAME"
+          echo "$UNAME ALL=(ALL) NOPASSWD:ALL" | sudo tee "/etc/sudoers.d/$UNAME" >/dev/null
+          sudo chmod 440 "/etc/sudoers.d/$UNAME"
+
+          # ---- sshd: password auth on, drop-in menang atas cloud-init ----
+          sudo mkdir -p /etc/ssh/sshd_config.d /run/sshd
+          sudo tee /etc/ssh/sshd_config.d/00-runzzx1.conf >/dev/null <<'EOF'
+          PasswordAuthentication yes
+          KbdInteractiveAuthentication yes
+          UsePAM yes
+          PermitRootLogin no
+          ClientAliveInterval 30
+          ClientAliveCountMax 6
+          EOF
+          sudo chmod 644 /etc/ssh/sshd_config.d/00-runzzx1.conf
+          sudo systemctl restart ssh 2>/dev/null || sudo systemctl restart sshd 2>/dev/null || sudo /usr/sbin/sshd
+          echo ">> sshd up"
+
+          # ---- tailscale ----
+          TSIP=""
+          if [ -n "${TS_AUTHKEY:-}" ]; then
+            curl -fsSL https://tailscale.com/install.sh | sh >/dev/null 2>&1 || true
+            sudo tailscale up --authkey="$TS_AUTHKEY" --hostname="runzzx1" \
+                 --accept-dns=false --ssh=false --timeout=90s >/dev/null 2>&1 || true
+            TSIP=$(tailscale ip -4 2>/dev/null | head -1 || true)
+          fi
+          echo "TSIP=$TSIP" >> "$GITHUB_ENV"
+          echo ">> tailscale ip: ${TSIP:-gagal}"
+
+          # ---- optional playwright ----
+          if [ "${PW:-no}" = "yes" ]; then
+            pip install -q playwright >/dev/null 2>&1 || true
+            python -m playwright install --with-deps chromium >/dev/null 2>&1 || true
+            echo ">> playwright ready"
+          fi
+
+          # ---- web terminal ----
+          curl -fsSL -o /tmp/ttyd https://github.com/tsl0922/ttyd/releases/latest/download/ttyd.x86_64
+          curl -fsSL -o /tmp/cf https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+          chmod +x /tmp/ttyd /tmp/cf
+          touch /tmp/ttyd.log /tmp/cf.log /tmp/pinggy.log
+          setsid nohup /tmp/ttyd -p 7681 -W -c "$UNAME:$PASS" \
+               -u "$(id -u "$UNAME")" -g "$(id -g "$UNAME")" bash >/tmp/ttyd.log 2>&1 &
+          setsid nohup /tmp/cf tunnel --url http://localhost:7681 --no-autoupdate >/tmp/cf.log 2>&1 &
+          sleep 2
+
+          # ---- pinggy TCP fallback, auto-reconnect + publish tiap URL baru ----
+          setsid nohup bash -c '
+            while true; do
+              ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                  -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=15 \
+                  -o ExitOnForwardFailure=yes -T -p 443 -R0:localhost:22 tcp@free.pinggy.io 2>&1 | \
+              while IFS= read -r line; do
+                echo "$line"
+                turl=$(printf "%s" "$line" | grep -oE "tcp://[A-Za-z0-9.-]+:[0-9]+" || true)
+                if [ -n "$turl" ]; then
+                  echo "TERMINUS=$turl"
+                  if [ -n "${NTFY_TOPIC:-}" ]; then
+                    curl -s --max-time 15 -d "URL BARU: $turl | user '"$UNAME"' | pass '"$PASS"'" \
+                      "https://ntfy.sh/$NTFY_TOPIC" >/dev/null || true
+                  fi
+                fi
+              done
+              echo ">> pinggy putus, reconnect 3s"
+              sleep 3
+            done
+          ' </dev/null >>/tmp/pinggy.log 2>&1 &
+
+          TURL=""
+          for i in $(seq 1 40); do
+            TURL=$(grep -oE 'tcp://[A-Za-z0-9.-]+:[0-9]+' /tmp/pinggy.log 2>/dev/null | head -1 || true)
+            [ -n "$TURL" ] && break
+            sleep 2
+          done
+
+          URL=""
+          for i in $(seq 1 40); do
+            URL=$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' /tmp/cf.log 2>/dev/null | head -1 || true)
+            [ -n "$URL" ] && break
+            sleep 1
+          done
+
+          THOST=""; TPORT=""
+          if [ -n "$TURL" ]; then
+            THOST=$(printf '%s' "$TURL" | sed -E 's|^tcp://||; s|:[0-9]+$||')
+            TPORT=$(printf '%s' "$TURL" | sed -E 's|^.*:([0-9]+)$|\1|')
+          fi
+
+          {
+            echo "## BOX SIAP — $UNAME"
+            echo ""
+            if [ -n "$TSIP" ]; then
+              echo "### Tailscale (stabil, pakai ini)"
+              echo ""
+              echo "- Host: \`$TSIP\`"
+              echo "- Port: \`22\`"
+              echo "- User: \`$UNAME\`"
+              echo "- Pass: \`$PASS\`"
+              echo ""
+            else
+              echo "### Tailscale GAGAL — pakai tunnel di bawah"
+              echo ""
+            fi
+            echo "### Fallback pinggy (ganti tiap ~60 menit)"
+            echo ""
+            echo "- Host: \`${THOST:-n/a}\`"
+            echo "- Port: \`${TPORT:-n/a}\`"
+            echo "- User: \`$UNAME\` / Pass: \`$PASS\`"
+            echo ""
+            echo "### Browser terminal"
+            echo ""
+            echo "- \`${URL:-n/a}\` — user \`$UNAME\` / pass \`$PASS\`"
+          } > /tmp/conn.md
+          cat /tmp/conn.md >> "$GITHUB_STEP_SUMMARY"
+
+          if [ -n "${NTFY_TOPIC:-}" ]; then
+            curl -s --max-time 20 \
+              -H "Title: BOX SIAP" -H "Tags: computer" \
+              -d "Tailscale: ${TSIP:-gagal} port 22 | user $UNAME | pass $PASS | web: ${URL:-n/a}" \
+              "https://ntfy.sh/$NTFY_TOPIC" >/dev/null || true
+            echo ">> published ke ntfy"
+          fi
+
+          echo "################################################"
+          echo "# BOX SIAP"
+          echo "TSIP=$TSIP"
+          echo "USER=$UNAME"
+          echo "PASS=$PASS"
+          echo "TERMINUS=$TURL"
+          echo "WEB=$URL"
+          echo "################################################"
+
+      - name: publish info
+        uses: actions/upload-artifact@v4
+        with:
+          name: conn
+          path: /tmp/conn.md
+          if-no-files-found: error
+
+      - name: hold
+        run: |
+          echo ">> hold ${HOURS} jam (timeout job 6 jam)"
+          sleep $(( HOURS * 3600 ))
