@@ -125,39 +125,19 @@ jobs:
         if: ${{ inputs.minecraft != 'no' }}
         run: |
           set -euo pipefail
-          cd "$HOME"
-          mkdir -p mc && cd mc
+          # semua kerjaan MC di $HOME/mc milik runzzx1, bukan /home/runner
+          MCHOME="/home/$UNAME"
+          sudo mkdir -p "$MCHOME/mc"
+          sudo chown -R "$UNAME":"$UNAME" "$MCHOME/mc"
 
-          if [ -n "${MCVER:-}" ]; then
-            URL="https://www.minecraft.net/bedrockdedicatedserver/bin-linux/bedrock-server-${MCVER}.zip"
-          else
-            URL=$(python3 "$GITHUB_WORKSPACE/repo/scripts/mc_version.py")
-          fi
-          echo "URL=$URL"
-          curl -fL --http1.1 --retry 3 --retry-all-errors -A "Mozilla/5.0" -o bs.zip "$URL"
-          unzip -oq bs.zip -d srv
+          sudo -u "$UNAME" -H env \
+            MCVER="${MCVER:-}" \
+            STATE_TOKEN="${STATE_TOKEN:-}" \
+            bash "$GITHUB_WORKSPACE/repo/scripts/mc_bootstrap.sh"
 
-          # ---- restore world dari repo privat ----
-          if [ -n "${STATE_TOKEN:-}" ]; then
-            git clone --depth 1 "https://x-access-token:${STATE_TOKEN}@github.com/Setyoanugrah/mcworld.git" world-repo 2>/dev/null || true
-            if [ -d world-repo/worlds ]; then
-              cp -a world-repo/worlds srv/
-              echo ">> world restored"
-            else
-              echo ">> world kosong, world baru dibuat"
-            fi
-          fi
-
-          python3 "$GITHUB_WORKSPACE/repo/scripts/mc_setup.py" srv/server.properties
-
-          cd srv
-          export LD_LIBRARY_PATH=.
-          chmod +x bedrock_server
-          setsid nohup ./bedrock_server >> "$HOME/mc/srv.log" 2>&1 &
-          sleep 25
-
-          echo "--- log ---"; grep -viE "telemetry|^\[.*\] $" "$HOME/mc/srv.log" | tail -14 || true
+          echo "--- log ---"; sudo -u "$UNAME" grep -viE "telemetry|^\[.*\] $" "$MCHOME/mc/srv.log" | tail -14 || true
           echo "--- udp ---"; ss -ulpn 2>/dev/null | grep -E "19132|19133" || true
+          echo "--- proses ---"; ps -o user,pid,cmd -p "$(pgrep -f '^\./bedrock_server' | head -1)" || true
 
           PONG=$(python3 "$GITHUB_WORKSPACE/repo/scripts/mcping.py" 127.0.0.1 19132 || echo "TIMEOUT")
           echo "PONG=$PONG"
@@ -236,27 +216,8 @@ jobs:
           for i in $(seq 1 36); do
             sleep 600
             [ -z "${STATE_TOKEN:-}" ] && { echo "no STATE_TOKEN, skip"; continue; }
-            cd "$HOME/mc" || continue
-            rm -rf world-repo
-            if ! git clone -q "https://x-access-token:${STATE_TOKEN}@github.com/Setyoanugrah/mcworld.git" world-repo 2>/dev/null; then
-              mkdir -p world-repo && cd world-repo
-              git init -q -b main
-              git config user.email box@local
-              git config user.name box
-              git remote add origin "https://x-access-token:${STATE_TOKEN}@github.com/Setyoanugrah/mcworld.git"
-              cd ..
-            fi
-            rm -rf world-repo/worlds
-            cp -a srv/worlds world-repo/ 2>/dev/null || continue
-            cd world-repo
-            git add -A
-            if git commit -qm "world backup $(date -u +%FT%TZ)" 2>/dev/null; then
-              git push -q origin HEAD:main 2>&1 | tail -2 || true
-              echo ">> world backed up"
-            else
-              echo ">> no change"
-            fi
-            cd ..
+            sudo -u "$UNAME" -H env STATE_TOKEN="${STATE_TOKEN:-}" \
+              bash "$GITHUB_WORKSPACE/repo/scripts/mc_backup.sh" || true
           done
 
       - name: hold
