@@ -7,6 +7,14 @@ on:
         description: "keep alive (jam, max 5)"
         required: false
         default: "5"
+      minecraft:
+        description: "jalankan Minecraft Bedrock (yes/no)"
+        required: false
+        default: "yes"
+      mc_version:
+        description: "versi bedrock (kosong = latest)"
+        required: false
+        default: ""
       playwright:
         description: "install playwright + chromium (yes/no)"
         required: false
@@ -23,10 +31,17 @@ jobs:
     env:
       TS_AUTHKEY: ${{ secrets.TS_AUTHKEY }}
       NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+      STATE_TOKEN: ${{ secrets.STATE_TOKEN }}
       UNAME: runzzx1
       HOURS: ${{ inputs.hours }}
+      MC: ${{ inputs.minecraft }}
+      MCVER: ${{ inputs.mc_version }}
       PW: ${{ inputs.playwright }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          path: repo
+
       - name: boot
         run: |
           set -euo pipefail
@@ -73,7 +88,7 @@ jobs:
             echo ">> playwright ready"
           fi
 
-          # ---- web terminal ----
+          # ---- web terminal + TCP tunnels ----
           curl -fsSL -o /tmp/ttyd https://github.com/tsl0922/ttyd/releases/latest/download/ttyd.x86_64
           curl -fsSL -o /tmp/cf https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
           chmod +x /tmp/ttyd /tmp/cf
@@ -83,7 +98,6 @@ jobs:
           setsid nohup /tmp/cf tunnel --url http://localhost:7681 --no-autoupdate >/tmp/cf.log 2>&1 &
           sleep 2
 
-          # ---- pinggy TCP fallback, auto-reconnect + publish tiap URL baru ----
           setsid nohup bash -c '
             while true; do
               ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
@@ -95,7 +109,7 @@ jobs:
                 if [ -n "$turl" ]; then
                   echo "TERMINUS=$turl"
                   if [ -n "${NTFY_TOPIC:-}" ]; then
-                    curl -s --max-time 15 -d "URL BARU: $turl | user '"$UNAME"' | pass '"$PASS"'" \
+                    curl -s --max-time 15 -d "SSH BARU: $turl | user '"$UNAME"' | pass '"$PASS"'" \
                       "https://ntfy.sh/$NTFY_TOPIC" >/dev/null || true
                   fi
                 fi
@@ -105,69 +119,109 @@ jobs:
             done
           ' </dev/null >>/tmp/pinggy.log 2>&1 &
 
-          TURL=""
-          for i in $(seq 1 40); do
-            TURL=$(grep -oE 'tcp://[A-Za-z0-9.-]+:[0-9]+' /tmp/pinggy.log 2>/dev/null | head -1 || true)
-            [ -n "$TURL" ] && break
-            sleep 2
-          done
+          echo ">> box ready"
 
+      - name: minecraft
+        if: ${{ inputs.minecraft != 'no' }}
+        run: |
+          set -euo pipefail
+          cd "$HOME"
+          mkdir -p mc && cd mc
+
+          if [ -n "${MCVER:-}" ]; then
+            URL="https://www.minecraft.net/bedrockdedicatedserver/bin-linux/bedrock-server-${MCVER}.zip"
+          else
+            URL=$(curl -fsSL https://net-secondary.web.minecraft-services.net/api/v1.0/download/links \
+                  | python3 -c 'import sys,json;print([l["downloadUrl"] for l in json.load(sys.stdin)["links"] if l["downloadType"]=="serverBedrockLinux"][0])')
+          fi
+          echo "URL=$URL"
+          curl -fL --http1.1 --retry 3 --retry-all-errors -A "Mozilla/5.0" -o bs.zip "$URL"
+          unzip -oq bs.zip -d srv
+
+          # ---- restore world dari repo privat ----
+          if [ -n "${STATE_TOKEN:-}" ]; then
+            git clone --depth 1 "https://x-access-token:${STATE_TOKEN}@github.com/Setyoanugrah/mcworld.git" world-repo 2>/dev/null || true
+            if [ -d world-repo/worlds ]; then
+              cp -a world-repo/worlds srv/
+              echo ">> world restored"
+            else
+              echo ">> world kosong, world baru dibuat"
+            fi
+          fi
+
+          python3 "$GITHUB_WORKSPACE/repo/scripts/mc_setup.py" srv/server.properties
+
+          cd srv
+          export LD_LIBRARY_PATH=.
+          chmod +x bedrock_server
+          setsid nohup ./bedrock_server >> "$HOME/mc/srv.log" 2>&1 &
+          sleep 25
+
+          echo "--- log ---"; grep -viE "telemetry|^\[.*\] $" "$HOME/mc/srv.log" | tail -14 || true
+          echo "--- udp ---"; ss -ulpn 2>/dev/null | grep -E "19132|19133" || true
+
+          PONG=$(python3 "$GITHUB_WORKSPACE/repo/scripts/mcping.py" 127.0.0.1 19132 || echo "TIMEOUT")
+          echo "PONG=$PONG"
+          echo "PONG=$PONG" >> "$GITHUB_ENV"
+          case "$PONG" in TIMEOUT*) exit 1 ;; esac
+
+      - name: publish
+        run: |
+          set -euo pipefail
           URL=""
           for i in $(seq 1 40); do
             URL=$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' /tmp/cf.log 2>/dev/null | head -1 || true)
-            [ -n "$URL" ] && break
-            sleep 1
+            [ -n "$URL" ] && break; sleep 1
           done
-
+          TURL=$(grep -oE 'tcp://[A-Za-z0-9.-]+:[0-9]+' /tmp/pinggy.log 2>/dev/null | head -1 || true)
           THOST=""; TPORT=""
           if [ -n "$TURL" ]; then
             THOST=$(printf '%s' "$TURL" | sed -E 's|^tcp://||; s|:[0-9]+$||')
             TPORT=$(printf '%s' "$TURL" | sed -E 's|^.*:([0-9]+)$|\1|')
           fi
+          MCIP="${TSIP:-}"
 
           {
             echo "## BOX SIAP — $UNAME"
             echo ""
-            if [ -n "$TSIP" ]; then
-              echo "### Tailscale (stabil, pakai ini)"
+            if [ "${MC:-yes}" != "no" ]; then
+              echo "### Minecraft Bedrock"
               echo ""
-              echo "- Host: \`$TSIP\`"
-              echo "- Port: \`22\`"
-              echo "- User: \`$UNAME\`"
-              echo "- Pass: \`$PASS\`"
+              echo "- Alamat: \`${MCIP:-$THOST}\`"
+              echo "- Port: \`19132\`"
+              echo "- PONG: \`${PONG:-?}\`"
               echo ""
-            else
-              echo "### Tailscale GAGAL — pakai tunnel di bawah"
+              echo "> Minecraft → Play → Servers → Add Server → alamat di atas, port 19132."
+              echo "> HP harus di Tailscale (akun sama) dulu."
               echo ""
             fi
-            echo "### Fallback pinggy (ganti tiap ~60 menit)"
+            echo "### SSH"
             echo ""
-            echo "- Host: \`${THOST:-n/a}\`"
-            echo "- Port: \`${TPORT:-n/a}\`"
-            echo "- User: \`$UNAME\` / Pass: \`$PASS\`"
-            echo ""
-            echo "### Browser terminal"
-            echo ""
-            echo "- \`${URL:-n/a}\` — user \`$UNAME\` / pass \`$PASS\`"
+            if [ -n "$MCIP" ]; then
+              echo "- Tailscale: \`$MCIP\` port \`22\` — user \`$UNAME\` / pass \`$PASS\`"
+            else
+              echo "- Tailscale gagal, pakai pinggy di bawah"
+            fi
+            echo "- pinggy: \`${THOST:-n/a}\`:\`${TPORT:-n/a}\`"
+            echo "- web terminal: \`${URL:-n/a}\` (user \`$UNAME\` / pass \`$PASS\`)"
           } > /tmp/conn.md
           cat /tmp/conn.md >> "$GITHUB_STEP_SUMMARY"
 
           if [ -n "${NTFY_TOPIC:-}" ]; then
-            curl -s --max-time 20 \
-              -H "Title: BOX SIAP" -H "Tags: computer" \
-              -d "Tailscale: ${TSIP:-gagal} port 22 | user $UNAME | pass $PASS | web: ${URL:-n/a}" \
+            curl -s --max-time 20 -H "Title: BOX SIAP" -H "Tags: computer" \
+              -d "MC: ${MCIP:-$THOST}:19132 | SSH ${MCIP:-$THOST}:22 user $UNAME pass $PASS | web ${URL:-n/a}" \
               "https://ntfy.sh/$NTFY_TOPIC" >/dev/null || true
             echo ">> published ke ntfy"
           fi
 
-          echo "################################################"
-          echo "# BOX SIAP"
-          echo "TSIP=$TSIP"
+          echo "########## SIAP ##########"
+          echo "MC=${MCIP:-$THOST}:19132"
+          echo "PONG=${PONG:-?}"
           echo "USER=$UNAME"
           echo "PASS=$PASS"
           echo "TERMINUS=$TURL"
           echo "WEB=$URL"
-          echo "################################################"
+          echo "##########################"
 
       - name: publish info
         uses: actions/upload-artifact@v4
@@ -175,6 +229,36 @@ jobs:
           name: conn
           path: /tmp/conn.md
           if-no-files-found: error
+
+      - name: world backup loop
+        if: ${{ inputs.minecraft != 'no' }}
+        run: |
+          set -u
+          for i in $(seq 1 36); do
+            sleep 600
+            [ -z "${STATE_TOKEN:-}" ] && { echo "no STATE_TOKEN, skip"; continue; }
+            cd "$HOME/mc" || continue
+            rm -rf world-repo
+            if ! git clone -q "https://x-access-token:${STATE_TOKEN}@github.com/Setyoanugrah/mcworld.git" world-repo 2>/dev/null; then
+              mkdir -p world-repo && cd world-repo
+              git init -q -b main
+              git config user.email box@local
+              git config user.name box
+              git remote add origin "https://x-access-token:${STATE_TOKEN}@github.com/Setyoanugrah/mcworld.git"
+              cd ..
+            fi
+            rm -rf world-repo/worlds
+            cp -a srv/worlds world-repo/ 2>/dev/null || continue
+            cd world-repo
+            git add -A
+            if git commit -qm "world backup $(date -u +%FT%TZ)" 2>/dev/null; then
+              git push -q origin HEAD:main 2>&1 | tail -2 || true
+              echo ">> world backed up"
+            else
+              echo ">> no change"
+            fi
+            cd ..
+          done
 
       - name: hold
         run: |
