@@ -126,14 +126,18 @@ jobs:
         run: |
           set -euo pipefail
           # semua kerjaan MC di $HOME/mc milik runzzx1, bukan /home/runner
+          # /home/runner/work itu mode 700 — script harus di-copy ke tempat yang bisa dibaca
           MCHOME="/home/$UNAME"
-          sudo mkdir -p "$MCHOME/mc"
+          sudo mkdir -p "$MCHOME/mc" /opt/mcbin
+          sudo cp "$GITHUB_WORKSPACE"/repo/scripts/* /opt/mcbin/
+          sudo chmod -R a+rX /opt/mcbin
+          sudo chmod +x /opt/mcbin/*.sh
           sudo chown -R "$UNAME":"$UNAME" "$MCHOME/mc"
 
           sudo -u "$UNAME" -H env \
             MCVER="${MCVER:-}" \
             STATE_TOKEN="${STATE_TOKEN:-}" \
-            bash "$GITHUB_WORKSPACE/repo/scripts/mc_bootstrap.sh"
+            bash /opt/mcbin/mc_bootstrap.sh
 
           echo "--- log ---"; sudo -u "$UNAME" grep -viE "telemetry|^\[.*\] $" "$MCHOME/mc/srv.log" | tail -14 || true
           echo "--- udp ---"; ss -ulpn 2>/dev/null | grep -E "19132|19133" || true
@@ -217,7 +221,7 @@ jobs:
             sleep 600
             [ -z "${STATE_TOKEN:-}" ] && { echo "no STATE_TOKEN, skip"; continue; }
             sudo -u "$UNAME" -H env STATE_TOKEN="${STATE_TOKEN:-}" \
-              bash "$GITHUB_WORKSPACE/repo/scripts/mc_backup.sh" || true
+              bash /opt/mcbin/mc_backup.sh || true
           done
 
       - name: hold

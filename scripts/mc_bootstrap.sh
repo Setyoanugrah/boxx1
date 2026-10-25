@@ -8,7 +8,7 @@
 #   STATE_TOKEN  PAT buat restore world dari repo privat
 set -euo pipefail
 
-REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
 MC_DIR="${MC_DIR:-$HOME/mc}"
 SRV="$MC_DIR/srv"
 LOG="$MC_DIR/srv.log"
