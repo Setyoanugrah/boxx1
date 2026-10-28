@@ -15,7 +15,7 @@ def note(m):
 
 
 KEY = os.environ.get("IMGBB_KEY", "")
-note("imgbb key present: %s" % bool(KEY))
+note("imgbb key: %s" % bool(KEY))
 
 note("installing")
 subprocess.run([sys.executable, "-m", "pip", "install", "-q",
@@ -29,10 +29,14 @@ note("cuda=%s %s" % (torch.cuda.is_available(), torch.cuda.get_device_name(0)))
 
 from diffusers import StableDiffusionXLPipeline
 
+# Animagine XL 3.1: an anime-tuned SDXL that is not gated on Hugging Face.
+# SDXL base renders "anime" as a western cartoon, so it cannot match the
+# reference style; this checkpoint is trained on anime illustration.
+MODEL = "cagliostrolab/animagine-xl-3.1"
+
 t1 = time.time()
 pipe = StableDiffusionXLPipeline.from_pretrained(
-    "stabilityai/stable-diffusion-xl-base-1.0",
-    torch_dtype=torch.float16, variant="fp16", use_safetensors=True)
+    MODEL, torch_dtype=torch.float16, use_safetensors=True)
 pipe.to("cuda")
 pipe.set_progress_bar_config(disable=True)
 note("model loaded %.0fs" % (time.time() - t1))
@@ -45,28 +49,35 @@ def imgbb(path, name):
     body = urllib.parse.urlencode({"image": data, "name": name}).encode()
     req = urllib.request.Request(
         "https://api.imgbb.com/1/upload?key=" + KEY, data=body, method="POST")
-    with urllib.request.urlopen(req, timeout=180) as f:
+    with urllib.request.urlopen(req, timeout=240) as f:
         d = json.loads(f.read())
     return d["data"]["url"]
 
 
+Q = "masterpiece, high score, great score, absurdres, newest, safe"
+
 JOBS = [
-    ("photo", 7,
-     "close-up portrait photograph of a woman with freckles in her early thirties, "
-     "soft window light from the left, 85mm lens, shallow depth of field, natural "
-     "skin texture, photorealistic, editorial photography, highly detailed",
-     "cartoon, anime, painting, illustration, lowres, blurry, deformed, watermark"),
-    ("art", 42,
-     "oil painting of a lone lighthouse on a cliff at dusk, thick impasto brush "
-     "strokes, moody teal and amber palette, dramatic storm clouds, painterly",
-     "photo, photorealistic, lowres, blurry, watermark, text"),
+    ("beach", 11,
+     "1girl, solo, short green hair, green eyes, yellow tank top, yellow shorts, "
+     "wet skin, glossy skin, smile, looking at viewer, medium breasts, "
+     "tropical beach, sunset, ocean, palm trees, rocks, golden hour, "
+     "lens flare, vivid colors, " + Q,
+     "lowres, bad anatomy, bad hands, text, error, worst quality, low quality, "
+     "jpeg artifacts, watermark, signature, blurry, extra digit"),
+    ("neon", 27,
+     "1girl, solo, long red hair, red eyes, black leather jacket, open jacket, "
+     "cleavage, looking at viewer, smirk, city at night, neon lights, "
+     "neon signs, cyberpunk, japanese text, bar, rain, reflections, "
+     "cinematic lighting, " + Q,
+     "lowres, bad anatomy, bad hands, text, error, worst quality, low quality, "
+     "jpeg artifacts, watermark, signature, blurry, extra digit"),
 ]
 
 urls = []
 for name, seed, prompt, neg in JOBS:
     t = time.time()
     img = pipe(prompt=prompt, negative_prompt=neg, height=1024, width=1024,
-               num_inference_steps=30, guidance_scale=7.0,
+               num_inference_steps=28, guidance_scale=6.0,
                generator=torch.Generator("cuda").manual_seed(seed)).images[0]
     path = "/tmp/%s.png" % name
     img.save(path)
