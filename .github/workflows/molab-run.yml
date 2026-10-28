@@ -47,6 +47,8 @@ jobs:
           CELL_FILE: repo/scripts/cells/${{ inputs.cell }}
           WAIT_MS: ${{ inputs.wait_ms }}
           APPEND: ${{ inputs.append }}
+          GH_TOKEN: ${{ secrets.STATE_TOKEN }}
+          GH_REPO: Setyoanugrah/boxx1
         run: python3 -u repo/scripts/molab_run_cell.py
 
       - name: Upload state
