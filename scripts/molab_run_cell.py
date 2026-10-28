@@ -139,13 +139,24 @@ def main():
         log("ran, waiting up to %ds" % (wait_ms // 1000))
 
         outs = target.locator("[data-testid=console-output-area]")
+        log("console areas:", outs.count())
         last = ""
         stable = 0
         deadline = time.time() + wait_ms / 1000
         while time.time() < deadline:
             page.wait_for_timeout(3000)
             try:
-                cur = outs.last.inner_text() if outs.count() else ""
+                # the newest cell's output is the one that keeps growing;
+                # pick the longest visible block rather than the last in DOM order
+                best = ""
+                for i in range(outs.count()):
+                    try:
+                        t = outs.nth(i).inner_text() or ""
+                    except Exception:  # noqa: BLE001
+                        continue
+                    if len(t) > len(best):
+                        best = t
+                cur = best
             except Exception:  # noqa: BLE001
                 cur = last
             if cur and cur == last:
