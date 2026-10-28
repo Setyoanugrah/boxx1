@@ -105,13 +105,15 @@ for step in range(STEPS):
     lat = s["lat"].to("cuda", dtype=torch.float16)
     e1 = s["e1"].to("cuda", dtype=torch.float16)
     e2 = s["e2"].to("cuda", dtype=torch.float16)
+    # SDXL's UNet expects both CLIP encoders concatenated: 768 + 1280 = 2048
+    enc = torch.cat([e1, e2], dim=-1)
     pool = s["pool"].to("cuda", dtype=torch.float16)
     noise = torch.randn_like(lat)
     ts = torch.randint(0, sched.config.num_train_timesteps, (1,), device="cuda").long()
     noisy = sched.add_noise(lat, noise, ts)
     add = {"text_embeds": pool, "time_ids": torch.tensor([[RES,RES,0,0,RES,RES]], device="cuda", dtype=torch.float16)}
     with torch.amp.autocast("cuda", dtype=torch.float16):
-        pred = unet(noisy, ts, encoder_hidden_states=e1, added_cond_kwargs=add).sample
+        pred = unet(noisy, ts, encoder_hidden_states=enc, added_cond_kwargs=add).sample
         loss = F.mse_loss(pred.float(), noise.float())
     opt.zero_grad(set_to_none=True)
     scaler.scale(loss).backward(); scaler.step(opt); scaler.update(); lr_s.step()
