@@ -166,8 +166,21 @@ def main():
             b.close()
             return 0
 
-        # try to pick a matching option
+        # pick from the opened listbox
         picked = False
+        try:
+            opts = page.locator("[role=option]")
+            for i in range(opts.count()):
+                t = (opts.nth(i).inner_text() or "").strip()
+                if match.lower() in t.lower():
+                    log("clicking option:", t)
+                    opts.nth(i).click(timeout=10000)
+                    picked = True
+                    break
+        except Exception as exc:  # noqa: BLE001
+            log("option click failed:", type(exc).__name__)
+
+        # fallback: the old paths
         for sel in ("select", "[role=combobox]", "button[aria-haspopup=listbox]"):
             loc = page.locator(sel)
             for i in range(loc.count()):
