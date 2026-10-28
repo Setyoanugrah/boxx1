@@ -43,6 +43,50 @@ def cookies():
     return out
 
 
+
+def expand_combobox(page):
+    """Click the accelerator combobox and print every option it reveals."""
+    loc = page.locator("[role=combobox]")
+    if not loc.count():
+        log("no combobox")
+        return []
+    el = loc.first
+    log("combobox text:", repr((el.inner_text() or "")[:60]))
+    try:
+        el.click(timeout=10000)
+        log("combobox clicked")
+    except Exception as exc:
+        log("combobox click failed:", type(exc).__name__)
+    page.wait_for_timeout(2500)
+
+    opts = []
+    for sel in ("[role=option]", "li[data-value]", "div[data-radix-collection-item]",
+                "button[role=option]", "[cmdk-item]"):
+        loc2 = page.locator(sel)
+        n = loc2.count()
+        if n:
+            log("  %s -> %d" % (sel, n))
+            for i in range(n):
+                try:
+                    t = (loc2.nth(i).inner_text() or "").strip().replace("\n", " ")[:90]
+                    if t:
+                        opts.append(t)
+                        log("     option:", t)
+                except Exception:
+                    pass
+    if not opts:
+        log("  no option elements; dumping visible text")
+        try:
+            body = page.inner_text("body")
+            for line in body.splitlines():
+                line = line.strip()
+                if any(k in line for k in ("GPU", "T4", "A100", "H100", "L4", "6000", "CPU", "vCPU", "RAM")):
+                    log("   body:", line[:110])
+        except Exception:
+            pass
+    return opts
+
+
 def dump_controls(page):
     """Print every control that could be the accelerator picker."""
     for sel in ("select", "button[role=combobox]", "[role=combobox]",
@@ -115,6 +159,7 @@ def main():
         log("panel opened:", opened)
         page.wait_for_timeout(3000)
         dump_controls(page)
+        expand_combobox(page)
 
         if list_only:
             log("LIST ONLY, exiting")
