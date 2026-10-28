@@ -4,11 +4,8 @@ import os
 import subprocess
 import sys
 import time
-
-# Render with SDXL (ungated, so no HF token needed) and commit the PNGs straight
-# into a GitHub repo through the contents API. Every file host tried so far
-# rejected anonymous uploads from this network, and the notebook has no way to
-# expose files directly, so the repo is the reliable path out.
+import urllib.parse
+import urllib.request
 
 t0 = time.time()
 
@@ -17,9 +14,8 @@ def note(m):
     print(str(m)[:300], flush=True)
 
 
-GH_TOKEN = os.environ.get("GH_TOKEN", "")
-GH_REPO = os.environ.get("GH_REPO", "Setyoanugrah/boxx1")
-GH_DIR = os.environ.get("GH_DIR", "renders")
+KEY = os.environ.get("IMGBB_KEY", "")
+note("imgbb key present: %s" % bool(KEY))
 
 note("installing")
 subprocess.run([sys.executable, "-m", "pip", "install", "-q",
@@ -36,16 +32,23 @@ from diffusers import StableDiffusionXLPipeline
 t1 = time.time()
 pipe = StableDiffusionXLPipeline.from_pretrained(
     "stabilityai/stable-diffusion-xl-base-1.0",
-    torch_dtype=torch.float16,
-    variant="fp16",
-    use_safetensors=True,
-)
+    torch_dtype=torch.float16, variant="fp16", use_safetensors=True)
 pipe.to("cuda")
 pipe.set_progress_bar_config(disable=True)
 note("model loaded %.0fs" % (time.time() - t1))
 
-OUT = "/tmp/sdxl_out"
-os.makedirs(OUT, exist_ok=True)
+
+def imgbb(path, name):
+    if not KEY:
+        return ""
+    data = base64.b64encode(open(path, "rb").read()).decode()
+    body = urllib.parse.urlencode({"image": data, "name": name}).encode()
+    req = urllib.request.Request(
+        "https://api.imgbb.com/1/upload?key=" + KEY, data=body, method="POST")
+    with urllib.request.urlopen(req, timeout=180) as f:
+        d = json.loads(f.read())
+    return d["data"]["url"]
+
 
 JOBS = [
     ("photo", 7,
@@ -59,64 +62,22 @@ JOBS = [
      "photo, photorealistic, lowres, blurry, watermark, text"),
 ]
 
-
-def gh_put(path, data_bytes, message):
-    """Create or update a file in the repo via the contents API."""
-    import urllib.error
-    import urllib.request
-
-    url = "https://api.github.com/repos/%s/contents/%s" % (GH_REPO, path)
-    headers = {"Authorization": "Bearer " + GH_TOKEN,
-               "Accept": "application/vnd.github+json",
-               "User-Agent": "molab-sdxl"}
-    sha = None
-    try:
-        req = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(req, timeout=60) as f:
-            sha = json.loads(f.read()).get("sha")
-    except urllib.error.HTTPError as exc:
-        if exc.code != 404:
-            raise
-    body = {"message": message,
-            "content": base64.b64encode(data_bytes).decode()}
-    if sha:
-        body["sha"] = sha
-    req = urllib.request.Request(url, data=json.dumps(body).encode(),
-                                 headers={**headers, "Content-Type": "application/json"},
-                                 method="PUT")
-    with urllib.request.urlopen(req, timeout=120) as f:
-        return json.loads(f.read())
-
-
 urls = []
 for name, seed, prompt, neg in JOBS:
     t = time.time()
-    img = pipe(
-        prompt=prompt,
-        negative_prompt=neg,
-        height=1024,
-        width=1024,
-        num_inference_steps=30,
-        guidance_scale=7.0,
-        generator=torch.Generator("cuda").manual_seed(seed),
-    ).images[0]
-    path = os.path.join(OUT, name + ".png")
+    img = pipe(prompt=prompt, negative_prompt=neg, height=1024, width=1024,
+               num_inference_steps=30, guidance_scale=7.0,
+               generator=torch.Generator("cuda").manual_seed(seed)).images[0]
+    path = "/tmp/%s.png" % name
     img.save(path)
-    note("rendered %s in %.1fs -> %d bytes" % (name, time.time() - t, os.path.getsize(path)))
-
-    if not GH_TOKEN:
-        note("no GH_TOKEN, skipping upload")
-        continue
-    stamp = time.strftime("%Y%m%d-%H%M%S")
-    remote = "%s/%s-%s.png" % (GH_DIR, name, stamp)
+    note("rendered %s %.1fs %d bytes" % (name, time.time() - t, os.path.getsize(path)))
     try:
-        res = gh_put(remote, open(path, "rb").read(), "render: %s" % name)
-        html = (res.get("content") or {}).get("html_url", "")
-        raw = ("https://raw.githubusercontent.com/%s/main/%s" % (GH_REPO, remote))
-        note("committed %s" % html[:110])
-        urls.append((name, raw))
-    except Exception as exc:  # noqa: BLE001
-        note("commit %s failed: %s %s" % (name, type(exc).__name__, str(exc)[:90]))
+        u = imgbb(path, name)
+        note("imgbb %s -> %s" % (name, u[:110]))
+        if u:
+            urls.append((name, u))
+    except Exception as exc:
+        note("imgbb %s failed: %s %s" % (name, type(exc).__name__, str(exc)[:120]))
 
 note("IMAGES " + json.dumps(urls))
 note("done %.0fs" % (time.time() - t0))
