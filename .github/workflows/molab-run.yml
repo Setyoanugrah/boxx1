@@ -1,0 +1,53 @@
+name: molab-run
+
+on:
+  workflow_dispatch:
+    inputs:
+      notebook:
+        description: "notebook url"
+        required: true
+      cell:
+        description: "file in scripts/cells/ to run"
+        required: true
+      wait_ms:
+        description: "max wait for the cell"
+        required: false
+        default: "180000"
+
+concurrency:
+  group: molab-run-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: repo
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install playwright
+        run: |
+          pip install --quiet playwright
+          python -m playwright install --with-deps chromium
+
+      - name: Run cell
+        env:
+          MOLAB_COOKIES: ${{ secrets.MOLAB_COOKIES }}
+          NB_URL: ${{ inputs.notebook }}
+          CELL_FILE: repo/scripts/cells/${{ inputs.cell }}
+          WAIT_MS: ${{ inputs.wait_ms }}
+        run: python3 -u repo/scripts/molab_run_cell.py
+
+      - name: Upload state
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: molab-state
+          path: /tmp/state.json
+          if-no-files-found: ignore
