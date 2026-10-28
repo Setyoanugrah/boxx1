@@ -57,6 +57,18 @@ try:
         open(os.path.join(DST, row["id"] + ".txt"), "w").write(row["caption"])
     log("dataset %d files" % len(os.listdir(DST)))
 
+    # wandb is broken in this image (proto mismatch) and is imported even when
+    # report_to=none. Stub it out so the example script can start.
+    import types as _types
+    for _m in ("wandb", "wandb.sdk", "wandb.sdk.lib",
+               "wandb.proto", "wandb.proto.wandb_telemetry_pb2"):
+        sys.modules.setdefault(_m, _types.ModuleType(_m))
+    sys.modules["wandb"].init = lambda *a, **k: None
+    sys.modules["wandb"].log = lambda *a, **k: None
+    sys.modules["wandb"].finish = lambda *a, **k: None
+    sys.modules["wandb"].Image = lambda *a, **k: None
+    log("wandb stubbed")
+
     OUT = "/tmp/lora_out"
     os.makedirs(OUT, exist_ok=True)
     cmd = [sys.executable, SCRIPT,
