@@ -49,6 +49,7 @@ jobs:
           APPEND: ${{ inputs.append }}
           GH_TOKEN: ${{ secrets.STATE_TOKEN }}
           GH_REPO: Setyoanugrah/boxx1
+          IMGBB_KEY: ${{ secrets.IMGBB_KEY }}
         run: python3 -u repo/scripts/molab_run_cell.py
 
       - name: Upload state
