@@ -103,8 +103,9 @@ finally:
     open("/tmp/train.done","w").write("1")
 """
 
-open("/tmp/train_worker2.py","w").write(WORKER)
-p = subprocess.Popen([sys.executable,"-u","/tmp/train_worker2.py"],
+WPATH = "/tmp/train_worker_%d.py" % int(time.time())
+open(WPATH,"w").write(WORKER)
+p = subprocess.Popen([sys.executable,"-u",WPATH],
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                      start_new_session=True)
 note("worker pid %d launched" % p.pid)
