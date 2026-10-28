@@ -72,13 +72,26 @@ for name, seed, prompt, neg in JOBS:
     img.save(path)
     note("rendered %s in %.1fs -> %d bytes" % (name, time.time() - t, os.path.getsize(path)))
 
-    r = subprocess.run(
-        ["curl", "-s", "-F", "reqtype=fileupload",
-         "-F", "fileToUpload=@" + path, "https://catbox.moe/user/api.php"],
-        capture_output=True, text=True, timeout=180)
-    url = (r.stdout or "").strip()
-    note("upload %s -> %s" % (name, url[:120]))
-    if url.startswith("http"):
+    # upload: try a few hosts, keep whichever returns a URL
+    url = ""
+    for host, cmd in (
+        ("0x0.st", ["curl", "-s", "-F", "file=@" + path, "https://0x0.st"]),
+        ("litterbox", ["curl", "-s", "-F", "reqtype=fileupload",
+                       "-F", "time=1h", "-F", "fileToUpload=@" + path,
+                       "https://litterbox.catbox.moe/resources/internals/api.php"]),
+        ("tmpfiles", ["curl", "-s", "-F", "file=@" + path, "https://tmpfiles.org/api/v1/upload"]),
+    ):
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+            out = (r.stdout or "").strip()
+            if out.startswith("http"):
+                url = out.split()[0]
+                note("upload %s via %s -> %s" % (name, host, url[:110]))
+                break
+            note("  %s said: %s" % (host, out[:90]))
+        except Exception as exc:  # noqa: BLE001
+            note("  %s failed: %s" % (host, type(exc).__name__))
+    if url:
         urls.append((name, url))
 
 note("IMAGES " + json.dumps(urls))
