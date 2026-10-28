@@ -16,6 +16,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+import http.cookiejar
 
 BASE = os.environ.get("NEBULA_BASE", "https://drive.rikuzetsi.my.id").rstrip("/")
 SIZE = int(os.environ.get("BENCH_MB", "1024")) * 1024 * 1024
@@ -28,6 +29,10 @@ UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
 
 ok = fail = 0
 results = {}
+
+# session cookies must survive between calls (register -> mint key)
+COOKIES = http.cookiejar.CookieJar()
+OPENER = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(COOKIES))
 
 
 def log(*a):
@@ -69,7 +74,7 @@ def call(path, method="GET", body=None, headers=None, raw=False, timeout=300):
         h["content-type"] = "application/json"
     req = urllib.request.Request(BASE + path, data=data, headers=h, method=method)
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as f:
+        with OPENER.open(req, timeout=timeout) as f:
             b = f.read()
             return f.status, (b if raw else json.loads(b or b"{}"))
     except urllib.error.HTTPError as e:
@@ -168,7 +173,7 @@ def main():
                         data=part,
                         headers={**H, "content-type": "application/octet-stream"},
                         method="POST")
-                    urllib.request.urlopen(req, timeout=300).read()
+                    OPENER.open(req, timeout=300).read()
                     with lock:
                         sent[0] += len(part)
                         if sent[0] % (128 * 1024 * 1024) < CH:
@@ -237,7 +242,7 @@ def main():
         req = urllib.request.Request(
             "%s/api/file/%s/download" % (BASE, fid),
             headers={**H, "Range": "bytes=%d-%d" % (a, b)})
-        data = urllib.request.urlopen(req, timeout=300).read()
+        data = OPENER.open(req, timeout=300).read()
         with glock:
             got[0] += len(data)
             if got[0] % (256 * 1024 * 1024) < BLOCK:
@@ -273,7 +278,7 @@ def main():
     tot = 0
     h1 = hashlib.sha256()
     req = urllib.request.Request("%s/api/file/%s/download" % (BASE, fid), headers=H)
-    with urllib.request.urlopen(req, timeout=900) as r:
+    with OPENER.open(req, timeout=900) as r:
         while True:
             b = r.read(1 << 20)
             if not b:
@@ -310,7 +315,7 @@ def main():
                     data=part,
                     headers={**H, "content-type": "application/octet-stream"},
                     method="POST")
-                urllib.request.urlopen(req, timeout=300).read()
+                OPENER.open(req, timeout=300).read()
             except Exception:  # noqa: BLE001
                 return
 
