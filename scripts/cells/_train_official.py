@@ -67,27 +67,20 @@ try:
     sys.modules["wandb"].log = lambda *a, **k: None
     sys.modules["wandb"].finish = lambda *a, **k: None
     sys.modules["wandb"].Image = lambda *a, **k: None
-    log("wandb stubbed (in-process only)")
-
-    # The example runs as a subprocess, so sys.modules patching does not reach it.
-    # Remove the wandb import from the downloaded script instead.
+    # wandb in this image is broken (proto mismatch). The example imports it
+    # only when available, so making the import fail cleanly is enough.
     try:
-        _src = open(SCRIPT).read()
-        _lines = []
-        _skip = False
-        for _l in _src.splitlines():
-            _s = _l.strip()
-            if _s.startswith("import wandb") or _s.startswith("from wandb"):
-                _lines.append("wandb = None")
-                continue
-            if _s.startswith("if is_wandb_available():"):
-                _lines.append("if False:")
-                continue
-            _lines.append(_l)
-        open(SCRIPT, "w").write("\n".join(_lines))
-        log("wandb import removed from script")
+        import wandb  # noqa: F401
+        log("wandb ok")
     except Exception as _e:
-        log("patch failed %s" % type(_e).__name__)
+        log("wandb broken (%s) -> forcing is_wandb_available False" % type(_e).__name__)
+        _site = os.path.dirname(subprocess.run(
+            [sys.executable, "-c", "import wandb,os;print(os.path.dirname(wandb.__file__))"],
+            capture_output=True, text=True).stdout.strip() or "/tmp")
+        if _site and os.path.isdir(_site):
+            import shutil as _sh
+            _sh.rmtree(_site, ignore_errors=True)
+            log("removed wandb package dir: %s" % _site)
 
     OUT = "/tmp/lora_out"
     os.makedirs(OUT, exist_ok=True)
