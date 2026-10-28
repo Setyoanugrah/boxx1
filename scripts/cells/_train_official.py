@@ -67,26 +67,20 @@ try:
     sys.modules["wandb"].log = lambda *a, **k: None
     sys.modules["wandb"].finish = lambda *a, **k: None
     sys.modules["wandb"].Image = lambda *a, **k: None
-    # wandb in this image has a broken proto module and every diffusers example
-    # imports it behind is_wandb_available(). pip uninstall reports success but
-    # leaves the files behind, so delete the package tree directly.
-    import shutil as _sh
-    _probe = subprocess.run(
-        [sys.executable, "-c",
-         "import wandb,os;print(os.path.dirname(wandb.__file__))"],
-        capture_output=True, text=True)
-    _dir = _probe.stdout.strip()
-    log("wandb dir: %s" % (_dir or "(not importable)"))
-    if _dir and os.path.isdir(_dir):
-        _sh.rmtree(_dir, ignore_errors=True)
-        _dist = os.path.join(os.path.dirname(_dir), "wandb-" )
-        for _d in os.listdir(os.path.dirname(_dir)):
-            if _d.lower().startswith("wandb"):
-                _sh.rmtree(os.path.join(os.path.dirname(_dir), _d), ignore_errors=True)
+    # wandb in this image has a broken proto module. Every diffusers example
+    # does `import wandb` at module level, so the package has to actually go.
+    # The import probe fails with ImportError and returns empty stdout, so glob
+    # site-packages directly instead of asking python where wandb lives.
+    import shutil as _sh, glob as _glob, site as _site
+    _roots = list(_site.getsitepackages()) + [_site.getusersitepackages()]
+    _hits = []
+    for _r in _roots:
+        _hits += _glob.glob(os.path.join(_r, "wandb*"))
+    log("wandb paths: %s" % [os.path.basename(h) for h in _hits][:6])
+    for _h in _hits:
+        _sh.rmtree(_h, ignore_errors=True) if os.path.isdir(_h) else os.remove(_h)
     _chk = subprocess.run([sys.executable, "-c", "import wandb"], capture_output=True, text=True)
-    log("wandb import after delete: rc=%d" % _chk.returncode)
-    if _chk.returncode == 0:
-        log("WARN wandb still importable")
+    log("wandb import after delete: rc=%d %s" % (_chk.returncode, _chk.stderr.strip().splitlines()[-1:] ))
 
     OUT = "/tmp/lora_out"
     os.makedirs(OUT, exist_ok=True)
