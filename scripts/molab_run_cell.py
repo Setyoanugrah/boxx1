@@ -88,22 +88,6 @@ def main():
         n = editors.count()
         log("editors:", n)
 
-        # Wipe every existing cell first: marimo runs whatever cell has focus,
-        # and stale cells kept stealing the keystrokes. One cell, no ambiguity.
-        try:
-            first = target.locator(".cm-content").first
-            first.click()
-            page.wait_for_timeout(300)
-            page.keyboard.press("Control+a")
-            page.wait_for_timeout(200)
-            for _ in range(30):
-                if editors.count() <= 1:
-                    break
-                page.keyboard.press("Shift+Backspace")
-                page.wait_for_timeout(250)
-            log("cells after wipe:", editors.count())
-        except Exception as exc:  # noqa: BLE001
-            log("wipe failed:", type(exc).__name__)
         # APPEND=0: use the notebook's existing empty cell (fresh notebook).
         if False:
           try:
