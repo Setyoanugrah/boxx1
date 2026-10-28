@@ -67,7 +67,27 @@ try:
     sys.modules["wandb"].log = lambda *a, **k: None
     sys.modules["wandb"].finish = lambda *a, **k: None
     sys.modules["wandb"].Image = lambda *a, **k: None
-    log("wandb stubbed")
+    log("wandb stubbed (in-process only)")
+
+    # The example runs as a subprocess, so sys.modules patching does not reach it.
+    # Remove the wandb import from the downloaded script instead.
+    try:
+        _src = open(SCRIPT).read()
+        _lines = []
+        _skip = False
+        for _l in _src.splitlines():
+            _s = _l.strip()
+            if _s.startswith("import wandb") or _s.startswith("from wandb"):
+                _lines.append("wandb = None")
+                continue
+            if _s.startswith("if is_wandb_available():"):
+                _lines.append("if False:")
+                continue
+            _lines.append(_l)
+        open(SCRIPT, "w").write("\n".join(_lines))
+        log("wandb import removed from script")
+    except Exception as _e:
+        log("patch failed %s" % type(_e).__name__)
 
     OUT = "/tmp/lora_out"
     os.makedirs(OUT, exist_ok=True)
