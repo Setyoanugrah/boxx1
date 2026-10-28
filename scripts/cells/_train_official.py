@@ -31,7 +31,7 @@ try:
     # fetch the official example script
     SCRIPT = "/tmp/train_dreambooth_lora_sdxl.py"
     url = ("https://raw.githubusercontent.com/huggingface/diffusers/main/"
-           "examples/advanced_diffusion_training/train_dreambooth_lora_sdxl.py")
+           "examples/dreambooth/train_dreambooth_lora_sdxl.py")
     try:
         src = urllib.request.urlopen(url, timeout=120).read()
         open(SCRIPT, "wb").write(src)
