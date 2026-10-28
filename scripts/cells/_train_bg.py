@@ -80,7 +80,12 @@ try:
             lat = vae.encode(px).latent_dist.sample() * vae.config.scaling_factor
             e1 = te1(t1.input_ids.to("cuda"))[0]
             o2 = te2(t2.input_ids.to("cuda"), output_hidden_states=True)
-            samples.append({"lat": lat.cpu(), "e1": e1.cpu(), "e2": o2[0].cpu(),
+            e2 = o2[0]
+            # both must be [batch, seq, dim]; squeeze any stray leading axis
+            if e1.dim() == 2: e1 = e1.unsqueeze(0)
+            if e2.dim() == 2: e2 = e2.unsqueeze(0)
+            log("shapes e1=%s e2=%s" % (tuple(e1.shape), tuple(e2.shape)))
+            samples.append({"lat": lat.cpu(), "e1": e1.cpu(), "e2": e2.cpu(),
                             "pool": o2.hidden_states[-2][:, -1].cpu()})
     log("encoded %d" % len(samples))
 
@@ -94,7 +99,10 @@ try:
     for step in range(STEPS):
         s = samples[step % len(samples)]
         lat = s["lat"].to("cuda", dtype=torch.float16)
-        enc = torch.cat([s["e1"], s["e2"]], dim=-1).to("cuda", dtype=torch.float16)
+        _a = s["e1"]; _b = s["e2"]
+        if _a.dim() == 2: _a = _a.unsqueeze(0)
+        if _b.dim() == 2: _b = _b.unsqueeze(0)
+        enc = torch.cat([_a, _b], dim=-1).to("cuda", dtype=torch.float16)
         pool = s["pool"].to("cuda", dtype=torch.float16)
         noise = torch.randn_like(lat)
         ts = torch.randint(0, sched.config.num_train_timesteps, (1,), device="cuda").long()
