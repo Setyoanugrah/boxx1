@@ -1,0 +1,56 @@
+name: bench
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "base URL nebula"
+        required: false
+        default: "https://drive.rikuzetsi.my.id"
+      mb:
+        description: "ukuran file (MB)"
+        required: false
+        default: "1024"
+      up_lanes:
+        description: "koneksi upload paralel"
+        required: false
+        default: "6"
+      dl_lanes:
+        description: "koneksi download paralel"
+        required: false
+        default: "8"
+
+concurrency:
+  group: bench-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: repo
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: disk space
+        run: |
+          df -h / /tmp | sed -n '1,4p'
+          nproc
+          free -m | head -2
+
+      - name: run benchmark
+        env:
+          NEBULA_BASE: ${{ inputs.target }}
+          BENCH_MB: ${{ inputs.mb }}
+          UP_LANES: ${{ inputs.up_lanes }}
+          DL_LANES: ${{ inputs.dl_lanes }}
+        run: python3 -u repo/scripts/bench1g.py
+
+      - name: cleanup
+        if: always()
+        run: rm -f /tmp/bench.bin
