@@ -67,20 +67,14 @@ try:
     sys.modules["wandb"].log = lambda *a, **k: None
     sys.modules["wandb"].finish = lambda *a, **k: None
     sys.modules["wandb"].Image = lambda *a, **k: None
-    # wandb in this image is broken (proto mismatch). The example imports it
-    # only when available, so making the import fail cleanly is enough.
-    try:
-        import wandb  # noqa: F401
-        log("wandb ok")
-    except Exception as _e:
-        log("wandb broken (%s) -> forcing is_wandb_available False" % type(_e).__name__)
-        _site = os.path.dirname(subprocess.run(
-            [sys.executable, "-c", "import wandb,os;print(os.path.dirname(wandb.__file__))"],
-            capture_output=True, text=True).stdout.strip() or "/tmp")
-        if _site and os.path.isdir(_site):
-            import shutil as _sh
-            _sh.rmtree(_site, ignore_errors=True)
-            log("removed wandb package dir: %s" % _site)
+    # wandb in this image has a broken proto module and every diffusers example
+    # imports it behind is_wandb_available(). Uninstalling it makes that check
+    # return False cleanly, which is the supported path when not logging to wandb.
+    r = subprocess.run([sys.executable, "-m", "pip", "uninstall", "-y", "wandb"],
+                       capture_output=True, text=True)
+    log("wandb uninstalled rc=%d" % r.returncode)
+    chk = subprocess.run([sys.executable, "-c", "import wandb"], capture_output=True, text=True)
+    log("wandb import now: rc=%d" % chk.returncode)
 
     OUT = "/tmp/lora_out"
     os.makedirs(OUT, exist_ok=True)
