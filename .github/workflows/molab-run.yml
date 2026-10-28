@@ -13,6 +13,10 @@ on:
         description: "max wait for the cell"
         required: false
         default: "180000"
+      append:
+        description: "1 = add a new cell, 0 = use the empty cell"
+        required: false
+        default: "1"
 
 concurrency:
   group: molab-run-${{ github.run_id }}
@@ -42,6 +46,7 @@ jobs:
           NB_URL: ${{ inputs.notebook }}
           CELL_FILE: repo/scripts/cells/${{ inputs.cell }}
           WAIT_MS: ${{ inputs.wait_ms }}
+          APPEND: ${{ inputs.append }}
         run: python3 -u repo/scripts/molab_run_cell.py
 
       - name: Upload state

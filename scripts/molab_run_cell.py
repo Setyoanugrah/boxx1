@@ -87,22 +87,22 @@ def main():
         editors = target.locator(".cm-editor")
         n = editors.count()
         log("editors:", n)
-        # Always append a fresh cell: writing into an existing one would
-        # overwrite earlier work and the console scrape would read the old output.
-        try:
-            target.locator(".cm-content").last.click()
-            page.keyboard.press("Control+End")
-            page.wait_for_timeout(300)
-            page.keyboard.press("Shift+Enter")
-            page.wait_for_timeout(800)
-            page.keyboard.press("Control+End")
-            page.wait_for_timeout(300)
-            n2 = editors.count()
-            log("editors after append:", n2)
-            if n2 > n:
-                n = n2
-        except Exception as exc:  # noqa: BLE001
-            log("append failed:", type(exc).__name__)
+        # APPEND=0: use the notebook's existing empty cell (fresh notebook).
+        if os.environ.get("APPEND", "1") == "1":
+          try:
+              target.locator(".cm-content").last.click()
+              page.keyboard.press("Control+End")
+              page.wait_for_timeout(300)
+              page.keyboard.press("Shift+Enter")
+              page.wait_for_timeout(800)
+              page.keyboard.press("Control+End")
+              page.wait_for_timeout(300)
+              n2 = editors.count()
+              log("editors after append:", n2)
+              if n2 > n:
+                  n = n2
+          except Exception as exc:  # noqa: BLE001
+              log("append failed:", type(exc).__name__)
         ed = editors.nth(n - 1)
         ed.scroll_into_view_if_needed()
         page.wait_for_timeout(400)
