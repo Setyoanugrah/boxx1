@@ -105,18 +105,35 @@ def main():
             log("append failed:", type(exc).__name__)
         ed = editors.nth(n - 1)
         ed.scroll_into_view_if_needed()
-        ed.click()
         page.wait_for_timeout(400)
-        page.keyboard.press("Control+a")
-        page.keyboard.press("Backspace")
-        page.keyboard.insert_text(code)
-        page.wait_for_timeout(1200)
-        txt = ed.inner_text()
-        if head not in txt:
-            log("INSERT MISMATCH, got:", repr(txt[:80]))
+
+        # The new cell's CodeMirror content is what actually takes keystrokes.
+        inserted = False
+        for attempt in range(4):
+            try:
+                content = target.locator(".cm-content").nth(n - 1)
+                content.click()
+                page.wait_for_timeout(500)
+                page.keyboard.press("Control+a")
+                page.keyboard.press("Delete")
+                page.wait_for_timeout(300)
+                page.keyboard.insert_text(code)
+                page.wait_for_timeout(1500)
+                txt = content.inner_text()
+                if head in txt:
+                    inserted = True
+                    log("code inserted on attempt", attempt)
+                    break
+                log("attempt", attempt, "mismatch:", repr(txt[:60]))
+            except Exception as exc:  # noqa: BLE001
+                log("attempt", attempt, "err", type(exc).__name__)
+            page.keyboard.press("Escape")
+            page.wait_for_timeout(600)
+
+        if not inserted:
+            log("INSERT FAILED")
             b.close()
             return 3
-        log("code inserted")
 
         page.keyboard.press("Shift+Enter")
         log("ran, waiting up to %ds" % (wait_ms // 1000))
